@@ -1,0 +1,14 @@
+# Go
+/tuxplay
+/tuxplay-gui
+*.test
+*.out
+coverage.out
+
+# Rust GUI
+/cmd/tuxplay-gui/target/
+/cmd/tuxplay-gui/Cargo.lock
+
+# Editors and OS noise
+.DS_Store
+Thumbs.db

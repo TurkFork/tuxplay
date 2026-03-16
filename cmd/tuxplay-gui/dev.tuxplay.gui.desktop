@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=TuxPlay GUI
+Comment=Control TuxPlay AirPlay routing from the desktop
+Exec=tuxplay-gui
+Icon=dev.tuxplay.gui
+Terminal=false
+Categories=AudioVideo;Audio;Network;GTK;
+StartupNotify=true

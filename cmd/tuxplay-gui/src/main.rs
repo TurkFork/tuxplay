@@ -8,17 +8,21 @@ use std::thread;
 use std::time::Duration;
 
 use adw::prelude::*;
-use anyhow::Result;
 use glib::{self, ControlFlow};
-use gtk::prelude::*;
 
 use crate::api::Client;
-use crate::model::{Device, Route, Status};
+use crate::model::{Device, Status};
 
 const SOCKET_PATH: &str = "/tmp/tuxplay.sock";
+const APP_ID: &str = "dev.tuxplay.gui";
 
-#[derive(Clone)]
+thread_local! {
+    static APP_UI: RefCell<Option<Rc<Ui>>> = const { RefCell::new(None) };
+    static APP_HOLD: RefCell<Option<gtk::gio::ApplicationHoldGuard>> = const { RefCell::new(None) };
+}
+
 struct Ui {
+    window: adw::ApplicationWindow,
     root: gtk::Box,
     status_label: gtk::Label,
     refresh_button: gtk::Button,
@@ -33,7 +37,7 @@ enum Message {
 
 fn main() {
     let app = adw::Application::builder()
-        .application_id("dev.tuxplay.gui")
+        .application_id(APP_ID)
         .build();
 
     app.connect_activate(build_ui);
@@ -41,10 +45,20 @@ fn main() {
 }
 
 fn build_ui(app: &adw::Application) {
+    APP_HOLD.with(|slot| {
+        if slot.borrow().is_none() {
+            *slot.borrow_mut() = Some(app.hold());
+        }
+    });
+
     let client = Client::new(SOCKET_PATH);
     let (sender, receiver) = mpsc::channel::<Message>();
 
     let header = adw::HeaderBar::new();
+    header.set_show_title(false);
+    let title_label = gtk::Label::new(Some("TuxPlay GUI"));
+    title_label.add_css_class("title-4");
+    header.set_title_widget(Some(&title_label));
     let spinner = gtk::Spinner::new();
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
@@ -53,7 +67,6 @@ fn build_ui(app: &adw::Application) {
     header.pack_start(&spinner);
     header.pack_end(&refresh_button);
 
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let scrolled = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
@@ -75,7 +88,7 @@ fn build_ui(app: &adw::Application) {
     status_label.set_margin_start(12);
     status_label.set_margin_end(12);
 
-    body.append(&header);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     body.append(&scrolled);
     body.append(&status_label);
 
@@ -86,17 +99,19 @@ fn build_ui(app: &adw::Application) {
         .default_height(760)
         .content(&body)
         .build();
+    window.set_titlebar(Some(&header));
 
-    let ui = Ui {
+    let ui = Rc::new(Ui {
+        window: window.clone(),
         root: content,
         status_label,
         refresh_button,
         spinner,
         last_status: Rc::new(RefCell::new(None)),
-    };
+    });
 
     {
-        let ui = ui.clone();
+        let ui = Rc::clone(&ui);
         let sender = sender.clone();
         let client = client.clone();
         ui.refresh_button.connect_clicked(move |_| {
@@ -105,7 +120,6 @@ fn build_ui(app: &adw::Application) {
     }
 
     {
-        let ui = ui.clone();
         let sender = sender.clone();
         let client = client.clone();
         glib::timeout_add_seconds_local(5, move || {
@@ -115,7 +129,7 @@ fn build_ui(app: &adw::Application) {
     }
 
     {
-        let ui = ui.clone();
+        let ui = Rc::clone(&ui);
         let sender = sender.clone();
         let client = client.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || {
@@ -134,8 +148,12 @@ fn build_ui(app: &adw::Application) {
         });
     }
 
+    APP_UI.with(|slot| {
+        *slot.borrow_mut() = Some(Rc::clone(&ui));
+    });
+
     request_status(client, sender);
-    window.present();
+    ui.window.present();
 }
 
 fn request_status(client: Client, sender: mpsc::Sender<Message>) {
@@ -148,7 +166,7 @@ fn request_status(client: Client, sender: mpsc::Sender<Message>) {
     });
 }
 
-fn render_status(ui: &Ui, client: &Client, sender: mpsc::Sender<Message>, status: &Status) {
+fn render_status(ui: &Rc<Ui>, client: &Client, sender: mpsc::Sender<Message>, status: &Status) {
     clear_box(&ui.root);
 
     ui.root.append(&section_title("Overview"));
@@ -227,7 +245,7 @@ fn render_status(ui: &Ui, client: &Client, sender: mpsc::Sender<Message>, status
     ));
 }
 
-fn render_error(ui: &Ui, error: &str) {
+fn render_error(ui: &Rc<Ui>, error: &str) {
     clear_box(&ui.root);
     ui.root.append(&section_title("Daemon Error"));
     ui.root
